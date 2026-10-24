@@ -35,7 +35,7 @@ let me=null,db=null,dberr=false,clk,mem=[],ALL=[],fc='',fd=day(Date.now()-6*864e
 const ls={g:()=>{try{return JSON.parse(localStorage.getItem('reg')||'[]')}catch{return mem}},s:a=>{mem=a;try{localStorage.setItem('reg',JSON.stringify(a))}catch{}}};
 const load=s=>new Promise((r,j)=>{const e=document.createElement('script');e.src=s;e.onload=r;e.onerror=j;document.head.appendChild(e)});
 async function initStore(){if(!FIREBASE_CONFIG.apiKey)return;try{const v='10.12.2/firebase-';await load('https://www.gstatic.com/firebasejs/'+v+'app-compat.js');await load('https://www.gstatic.com/firebasejs/'+v+'firestore-compat.js');firebase.initializeApp(FIREBASE_CONFIG);db=firebase.firestore()}catch(e){dberr=true}}
-async function saveRec(r){if(db)await db.collection('registros').add(r);else{const a=ls.g();a.push(r);ls.s(a)}}
+async function saveRec(r){if(db)await db.collection('registros').doc(r.id+'_'+day(r.ts)+'_'+r.tipo).set(r);else{const a=ls.g();a.push(r);ls.s(a)}}
 async function getRecs(){if(db){const s=await db.collection('registros').orderBy('ts','desc').limit(2000).get();return s.docs.map(d=>d.data())}return ls.g().sort((a,b)=>b.ts-a.ts)}
 
 const seedSedes=()=>[...new Set(SEED.map(u=>u.c))];
@@ -66,10 +66,10 @@ try{ALL=await getRecs()}catch(e){v.innerHTML='<p class="err">No se pudieron carg
 if(t==='mark')return markView();
 if(t==='mine'){const l=Date.now()-30*864e5;v.innerHTML=`<div class="card"><h2>Mis registros</h2><p class="mut s">Historial de los últimos 30 días. Solo lectura.</p>${tbl(ALL.filter(r=>r.id===me.id&&r.ts>l),0)}</div>`;return}
 if(t==='usr')return usrView();adminView(t)}
-function markView(){const rs=ALL.filter(r=>r.id===me.id&&day(r.ts)===day(Date.now())).sort((a,b)=>b.ts-a.ts),last=rs[0],open=last&&last.tipo==='entrada';
+function markView(){const rs=ALL.filter(r=>r.id===me.id&&day(r.ts)===day(Date.now())).sort((a,b)=>b.ts-a.ts),last=rs[0],hasE=rs.some(r=>r.tipo==='entrada'),hasS=rs.some(r=>r.tipo==='salida');
 $('#v').innerHTML=`<div class="card"><div id="clk"></div><p class="mut">${last?'Último registro de hoy: '+last.tipo+', '+fmt(last.ts):'Hoy aún no has marcado.'}</p>
-<button class="b go" ${open?'disabled':''} onclick="openMark('entrada')">Marcar entrada</button>
-<button class="b out" ${open?'':'disabled'} onclick="openMark('salida')">Marcar salida</button>
+${hasE&&hasS?'<p class="mut s"><b>Ya completaste tu entrada y salida de hoy.</b></p>':''}<button class="b go" ${hasE?'disabled':''} onclick="openMark('entrada')">Marcar entrada</button>
+<button class="b out" ${hasE&&!hasS?'':'disabled'} onclick="openMark('salida')">Marcar salida</button>
 <p class="mut s">Al marcar se toma una foto con marca de agua (nombre, tipo y hora). Para la salida debes indicar una novedad.</p></div>`;
 const k=()=>$('#clk')&&($('#clk').textContent=new Date().toLocaleTimeString('es-CO'));k();clk=setInterval(k,1000)}
 const PAR=()=>{const by={},p={};ALL.slice().sort((a,b)=>a.ts-b.ts).forEach(r=>{if(r.tipo==='entrada')by[r.id]=r;else if(by[r.id]){p[r.id+'|'+r.ts]=r.ts-by[r.id].ts;by[r.id]=null}});return p};
@@ -99,8 +99,8 @@ ${g?`<div class="card"><h2>Nueva sede</h2><input id="ns" placeholder="Nombre de 
 <div class="card"><h2>Usuarios activos (${l.length})</h2><div class="row"><select onchange="fc=this.value;usrView()"><option value="">Todas las sedes</option>${opts(CITIES,fc)}</select><input placeholder="Buscar nombre o cédula" value="${esc(uq)}" onchange="uq=this.value.toLowerCase();usrView()"></div>
 <div class="sc"><table><tr><th>Nombre</th><th>Cédula</th><th>Sede</th><th></th></tr>${l.map(u=>`<tr><td>${esc(u.n)}${u.r?` <small class="mut">${u.r===2?'Admin global':'Admin'}</small>`:''}</td><td>${esc(u.id)}</td><td>${can(u)?`<select onchange="moveUser('${u.id}',this.value)">${opts(CITIES,u.c)}</select>`:esc(u.c)}</td><td>${can(u)&&u.id!==me.id?`<button class="b ghost" style="padding:6px 10px;margin:0" onclick="rmUser('${u.id}')">Eliminar</button>`:''}</td></tr>`).join('')}</table></div></div>`}
 async function addUser(){const n=$('#un').value.replace(/\s+/g,' ').trim(),id=$('#ui').value.replace(/\D/g,''),c=$('#uc').value,r=me.r===2?+$('#ur').value:0,e=$('#ue');
-if(!n||!id||!c)return e.textContent='Completa nombre, cédula y sede.';if(USERS.some(u=>u.id===id))return e.textContent='Esa cédula ya está registrada.';
-try{await putUser({id,n,c,r});usrView()}catch(x){e.textContent='No se pudo guardar. Revisa tu conexión.'}}
+if(!n||!id||!c)return e.textContent='Completa nombre, cédula y sede.';const nk=z=>String(z).normalize('NFD').replace(/[\u0300-\u036f]/g,'').toUpperCase().replace(/\s+/g,' ').trim();
+try{await loadUsers();const d1=USERS.find(u=>u.id===id);if(d1)return e.textContent='Esa cédula ya está registrada a nombre de '+d1.n+' ('+d1.c+').';const d2=USERS.find(u=>nk(u.n)===nk(n));if(d2)return e.textContent='Ya existe un usuario con ese nombre: '+d2.n+' ('+d2.c+', cédula '+d2.id+').';await putUser({id,n,c,r});usrView()}catch(x){e.textContent='No se pudo guardar. Revisa tu conexión.'}}
 async function moveUser(id,c){const u=USERS.find(x=>x.id===id);try{await putUser({...u,c})}catch(x){alert('No se pudo cambiar la sede.')}usrView()}
 async function rmUser(id){const u=USERS.find(x=>x.id===id);if(!confirm('¿Eliminar a '+u.n+'? Sus registros anteriores se conservan.'))return;try{await delUser(id)}catch(x){alert('No se pudo eliminar.')}usrView()}
 async function addSede(){const n=$('#ns').value.replace(/[<>&"]/g,'').replace(/\s+/g,' ').trim().toLowerCase().replace(/(^|\s)\S/g,m=>m.toUpperCase());
@@ -124,6 +124,6 @@ function retake(){st.foto=null;$('#cv').hidden=true;$('#vd').hidden=false;$('#rt
 function closeMark(){stopCam();$('#mo').remove()}
 async function saveMark(){let nov='',txt='';
 if(st.tipo==='salida'){nov=$('#nv').value;txt=$('#tx').value.trim();if(!nov)return $('#me').textContent='Elige la novedad de salida.';if(nov==='Novedad'&&!txt)return $('#me').textContent='Describe la novedad.'}
-$('#sv').disabled=true;try{await saveRec({id:me.id,n:me.n,c:me.c,tipo:st.tipo,ts:Date.now(),nov,txt,foto:st.foto});closeMark();tabTo('mark')}catch(e){$('#me').textContent='No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.';$('#sv').disabled=false}}
+$('#sv').disabled=true;try{const fr=(await getRecs()).filter(x=>x.id===me.id&&day(x.ts)===day(Date.now()));if(fr.some(x=>x.tipo===st.tipo)){$('#me').textContent='Ya registraste tu '+st.tipo+' hoy. Solo se permite una entrada y una salida por día.';$('#sv').disabled=false;return}await saveRec({id:me.id,n:me.n,c:me.c,tipo:st.tipo,ts:Date.now(),nov,txt,foto:st.foto});closeMark();tabTo('mark')}catch(e){$('#me').textContent='No se pudo guardar. Revisa tu conexión e inténtalo de nuevo.';$('#sv').disabled=false}}
 initStore().then(loadUsers).catch(()=>{dberr=true;refreshC()}).then(login);
 </script></body></html>
